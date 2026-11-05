@@ -15,6 +15,7 @@
 // *****************************************************************************
 
 import * as chai from 'chai';
+import { isWindows } from '../../common/os.js';
 import { Deferred } from '../../common/promise-util.js';
 import { ILogger } from '../../common/logger.js';
 import { ProcessEnvironment } from '../process-environment.js';
@@ -39,6 +40,8 @@ describe('EnvVariablesServerImpl', () => {
 
     const variable = 'THEIA_ENV_VARIABLES_SERVER_SPEC';
     const stale = 'THEIA_ENV_VARIABLES_SERVER_SPEC_STALE';
+    // the server reports the names in lower case on Windows, where the environment is case-insensitive
+    const name = (key: string) => isWindows ? key.toLowerCase() : key;
     let configDir: string | undefined;
 
     beforeEach(() => {
@@ -60,7 +63,7 @@ describe('EnvVariablesServerImpl', () => {
 
     it('takes a snapshot of the environment in the constructor', () => {
         const server = new TestEnvVariablesServer();
-        expect(server.snapshotKeys).to.contain(stale);
+        expect(server.snapshotKeys).to.contain(name(stale));
     });
 
     it('answers with the complete environment once it is ready', async () => {
@@ -74,9 +77,9 @@ describe('EnvVariablesServerImpl', () => {
         delete process.env[stale];
         server.ready.resolve();
         await pending;
-        expect(value).to.deep.equal({ name: variable, value: 'from the login shell' });
+        expect(value).to.deep.equal({ name: name(variable), value: 'from the login shell' });
         // the entries of the first snapshot that are gone are dropped
         expect(await server.getValue(stale)).to.equal(undefined);
-        expect((await server.getVariables()).map(v => v.name)).to.contain(variable).and.not.to.contain(stale);
+        expect((await server.getVariables()).map(v => v.name)).to.contain(name(variable)).and.not.to.contain(name(stale));
     });
 });
