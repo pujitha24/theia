@@ -17,7 +17,7 @@
 import { execFile } from 'child_process';
 import * as os from 'os';
 import { inject, injectable } from 'inversify';
-import { Stopwatch } from '../common/performance';
+import { Stopwatch } from '../common/performance/index.js';
 
 export const ShellEnvironment = Symbol('ShellEnvironment');
 

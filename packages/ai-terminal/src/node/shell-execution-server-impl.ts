@@ -18,7 +18,7 @@ import * as path from 'path';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { ProcessEnvironment } from '@theia/core/lib/node/process-environment';
 import { spawn, ChildProcess, execSync } from 'child_process';
-import { ShellExecutionServer, ShellExecutionRequest, ShellExecutionResult } from '../common/shell-execution-server';
+import { ShellExecutionServer, ShellExecutionRequest, ShellExecutionResult } from '../common/shell-execution-server.js';
 
 const DEFAULT_TIMEOUT = 120000; // 2 minutes
 const MAX_TIMEOUT = 600000;     // 10 minutes

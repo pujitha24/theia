@@ -27,7 +27,7 @@ import {
     ClaudeCodeService,
     ToolApprovalRequestMessage,
     ToolApprovalResponseMessage
-} from '../common/claude-code-service';
+} from '../common/claude-code-service.js';
 
 interface ToolApprovalResult {
     behavior: 'allow' | 'deny';

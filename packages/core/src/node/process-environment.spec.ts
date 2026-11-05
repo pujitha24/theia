@@ -15,8 +15,8 @@
 // *****************************************************************************
 
 import * as chai from 'chai';
-import { ILogger } from '../common/logger';
-import { PROCESS_ENVIRONMENT_PENDING_VARIABLE, ProcessEnvironmentImpl, ProcessEnvironmentMessage } from './process-environment';
+import { ILogger } from '../common/logger.js';
+import { PROCESS_ENVIRONMENT_PENDING_VARIABLE, ProcessEnvironmentImpl, ProcessEnvironmentMessage } from './process-environment.js';
 
 const expect = chai.expect;
 

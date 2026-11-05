@@ -15,7 +15,7 @@
 // *****************************************************************************
 
 import { expect } from 'chai';
-import { parseShellPath } from './shell-environment';
+import { parseShellPath } from './shell-environment.js';
 
 describe('shell-environment', () => {
 

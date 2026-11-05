@@ -15,9 +15,9 @@
 // *****************************************************************************
 
 import { inject, injectable, named, postConstruct } from 'inversify';
-import { ILogger } from '../common/logger';
-import { Deferred } from '../common/promise-util';
-import { isObject } from '../common/types';
+import { ILogger } from '../common/logger.js';
+import { Deferred } from '../common/promise-util.js';
+import { isObject } from '../common/types.js';
 
 /**
  * Name of the environment variable with which the parent process announces that it will complete
