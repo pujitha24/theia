@@ -22,6 +22,7 @@ import { FileUri } from '@theia/core/lib/node';
 import { HostedPluginSupport } from '@theia/plugin-ext/lib/hosted/node/hosted-plugin';
 import { LogType } from '@theia/plugin-ext/lib/common/types';
 import { ProcessUtils } from '@theia/core/lib/node/process-utils';
+import { ProcessEnvironment } from '@theia/core/lib/node/process-environment';
 
 export const HostedPluginsManager = Symbol('HostedPluginsManager');
 
@@ -57,6 +58,9 @@ export class HostedPluginsManagerImpl implements HostedPluginsManager {
 
     @inject(ProcessUtils)
     protected readonly processUtils: ProcessUtils;
+
+    @inject(ProcessEnvironment)
+    protected readonly processEnvironment: ProcessEnvironment;
 
     protected watchCompilationRegistry: Map<string, cp.ChildProcess>;
 
@@ -104,7 +108,9 @@ export class HostedPluginsManagerImpl implements HostedPluginsManager {
         return new Promise(resolve => resolve(this.watchCompilationRegistry.has(pluginPath)));
     }
 
-    protected runWatchScript(pluginRootPath: string): Promise<void> {
+    protected async runWatchScript(pluginRootPath: string): Promise<void> {
+        // `npm` must be found on the PATH of the user's login shell, which the backend may still be waiting for.
+        await this.processEnvironment.ready;
         const watchProcess = cp.spawn('npm', ['run', 'watch'], { cwd: pluginRootPath, shell: true });
         watchProcess.on('exit', () => this.unregisterWatchScript(pluginRootPath));
 
@@ -113,7 +119,6 @@ export class HostedPluginsManagerImpl implements HostedPluginsManager {
             data: 'Compilation watcher has been started in ' + pluginRootPath,
             type: LogType.Info
         });
-        return Promise.resolve();
     }
 
     protected unregisterWatchScript(pluginRootPath: string): void {

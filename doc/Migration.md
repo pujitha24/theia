@@ -9,10 +9,6 @@ Please see the latest version (`master`) for the most up-to-date information. Pl
 
 ### General
 
-_Electron: the login shell environment arrives after the backend has started_:
-
-The Electron main process no longer blocks on the user's login shell before anything else happens. The backend is forked right away, with the environment of the GUI application, and receives the shell's `PATH` from the main process once it has been resolved. Backend code that spawns processes which must find the user's tools must await `ProcessEnvironment.ready` from `@theia/core/lib/node/process-environment` before spawning; the plugin host, terminals, tasks, MCP servers and the AI shell tools do so. Code that spawns without waiting may run with the GUI application's `PATH`, which the blocking `fix-path` of earlier versions prevented. In a browser deployment, on Windows, and in `--no-cluster` mode `ready` resolves at once. The `@theia/electron/shared/fix-path` re-export stays available but is deprecated; the main process resolves the shell's `PATH` with its `ShellEnvironment` service (`@theia/core/lib/electron-main/shell-environment`) now.
-
 _Loading indicator no longer delays the `ready` state_:
 
 `FrontendApplication.start()` no longer waits for the loading indicator (the `.theia-preload` element) to fade out and be removed before the application state becomes `ready`.
@@ -172,6 +168,20 @@ asarUnpack:
 Use `BundledResourceProvider.resolveExternalPath(path)` for any other bundled file that is handed to a process outside of the application, such as a script or a helper executable. This also applies to code of your own that spawns the `rgPath` exported by `@vscode/ripgrep`: in the bundle, `rgPath` points to `app.asar.unpacked` only if the binary was unpacked, and into the archive otherwise.
 
 If you worked around the ripgrep problem by overriding the `@vscode/ripgrep` replacement in your own esbuild configuration, that override is no longer needed.
+
+### v1.78.0
+
+#### Electron: the login shell environment arrives after the backend has started [#18204](https://github.com/eclipse-theia/theia/pull/18204)
+
+The Electron main process no longer blocks on the user's login shell before anything else happens. The backend is forked right away, with the environment of the GUI application, and receives the shell's `PATH` from the main process over IPC once it has been resolved. Backend code that spawns processes which must find the user's tools must await `ProcessEnvironment.ready` from `@theia/core/lib/node/process-environment` before spawning. Code that spawns without waiting may run with the GUI application's `PATH`, which the blocking `fix-path` of earlier versions prevented. In a browser deployment, on Windows, and in `--no-cluster` mode `ready` resolves at once.
+
+The wait is per call site, not in the process factories of `@theia/process`, which are synchronous. Theia waits where it spawns processes on behalf of the user: the plugin host, terminals, tasks, debug adapters, local MCP servers, the AI shell tools, the Copilot CLI and Claude Code SDK locators, the dev container tooling and the hosted plugin watch script. Direct users of `RawProcessFactory`, `TerminalProcessFactory` or `child_process` in extensions have to await `ready` themselves, when the process must find a tool on the user's `PATH`.
+
+The main process announces the pending environment to the backend with the `THEIA_PROCESS_ENVIRONMENT` variable in `ElectronMainApplication.getForkOptions()`. An override of `getForkOptions()` that builds the fork environment without spreading `super.getForkOptions()` must pass this variable through; otherwise the backend does not wait and `ready` resolves at once. The main process sends the environment as an IPC message, which Node holds until the backend attaches its first `'message'` listener. Backend code that attaches a `'message'` listener to `process` before the application container is created would receive that message instead, and `ready` would resolve only after its timeout, with the environment of the GUI application.
+
+`HostedPluginProcess.runPluginServer()` returns a `Promise<void>` now, which rejects if the plugin host could not be forked; an override declared as `void` must be updated.
+
+The `@theia/electron/shared/fix-path` re-export stays available but is deprecated; the main process resolves the shell's `PATH` with its `ShellEnvironment` service (`@theia/core/lib/electron-main/shell-environment`) now.
 
 ### v1.77.0
 

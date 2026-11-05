@@ -20,6 +20,7 @@ import { MCPOAuthCredentialStore } from './mcp-oauth-credential-store.js';
 import { MCPServer } from './mcp-server.js';
 import { MockLogger } from '@theia/core/lib/common/test/mock-logger';
 import { ProcessEnvironment } from '@theia/core/lib/node/process-environment';
+import { Deferred } from '@theia/core/lib/common/promise-util';
 
 describe('MCPServerManagerImpl OAuth cleanup', () => {
     it('stops a running server before clearing OAuth credentials', async () => {
@@ -642,5 +643,40 @@ describe('MCPServerManagerImpl OAuth cleanup', () => {
         await manager.signOut('asana');
 
         expect(calls).to.deep.equal(['stop', 'clear']);
+    });
+
+    describe('waiting for the environment of the backend', () => {
+
+        function managerWithServer(description: object): { manager: MCPServerManagerImpl, ready: Deferred<void>, calls: string[] } {
+            const calls: string[] = [];
+            const ready = new Deferred<void>();
+            const manager = new MCPServerManagerImpl();
+            (manager as unknown as { logger: MockLogger }).logger = new MockLogger();
+            (manager as unknown as { processEnvironment: ProcessEnvironment }).processEnvironment = { ready: ready.promise };
+            const server = {
+                getDescription: async () => description,
+                start: async () => { calls.push('start'); }
+            };
+            (manager as unknown as { servers: Map<string, MCPServer> }).servers = new Map([
+                ['asana', server as unknown as MCPServer]
+            ]);
+            return { manager, ready, calls };
+        }
+
+        it('starts a local server only once the environment is complete', async () => {
+            const { manager, ready, calls } = managerWithServer({ name: 'asana', command: 'npx', args: ['asana-mcp'] });
+            const started = manager.startServer('asana');
+            await new Promise(resolve => setTimeout(resolve, 0));
+            expect(calls).to.deep.equal([]);
+            ready.resolve();
+            await started;
+            expect(calls).to.deep.equal(['start']);
+        });
+
+        it('starts a remote server without waiting for the environment', async () => {
+            const { manager, calls } = managerWithServer({ name: 'asana', serverUrl: 'https://mcp.example.com/mcp' });
+            await manager.startServer('asana');
+            expect(calls).to.deep.equal(['start']);
+        });
     });
 });

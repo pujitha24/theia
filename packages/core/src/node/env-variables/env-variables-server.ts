@@ -16,7 +16,7 @@
 
 import { join } from 'path';
 import { homedir } from 'os';
-import { injectable, inject, named, postConstruct } from 'inversify';
+import { injectable, inject, named } from 'inversify';
 import * as drivelist from 'drivelist';
 import { pathExists, mkdir } from '../../../shared/fs-extra/index.cjs';
 import { EnvVariable, EnvVariablesServer } from '../../common/env-variables/index.js';
@@ -31,8 +31,7 @@ import { ProcessEnvironment } from '../process-environment.js';
 export class EnvVariablesServerImpl implements EnvVariablesServer {
 
     protected readonly envs: { [key: string]: EnvVariable } = {};
-    /** Settles once {@link envs} holds the complete environment of the process. */
-    protected snapshot: Promise<void> = Promise.resolve();
+    protected completeSnapshot: Promise<void> | undefined;
     protected readonly homeDirUri = FileUri.create(homedir()).toString();
     protected readonly configDirUri: Promise<string>;
     protected readonly pathExistenceCache: { [key: string]: boolean } = {};
@@ -46,15 +45,24 @@ export class EnvVariablesServerImpl implements EnvVariablesServer {
     constructor() {
         this.configDirUri = this.createConfigDirUri();
         this.configDirUri.then(configDirUri => this.logger.info(`Configuration directory URI: '${configDirUri}'`));
+        this.snapshotEnvironment();
     }
 
-    @postConstruct()
-    protected init(): void {
-        // The environment may be completed with the user's login shell PATH after this process started.
-        this.snapshot = this.processEnvironment.ready.then(() => this.snapshotEnvironment());
+    /**
+     * Settles once {@link envs} holds the complete environment of the process, which may be completed with
+     * the user's login shell PATH after the process started.
+     */
+    protected get snapshot(): Promise<void> {
+        return this.completeSnapshot ??= this.processEnvironment.ready.then(() => this.snapshotEnvironment());
     }
 
+    /**
+     * Replaces the content of {@link envs} with the current environment of the process.
+     */
     protected snapshotEnvironment(): void {
+        for (const key of Object.keys(this.envs)) {
+            delete this.envs[key];
+        }
         const prEnv = process.env;
         Object.keys(prEnv).forEach((key: string) => {
             let keyName = key;

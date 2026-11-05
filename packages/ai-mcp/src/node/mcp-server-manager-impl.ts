@@ -14,7 +14,9 @@
 // SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
 // *****************************************************************************
 import { inject, injectable, named } from '@theia/core/shared/inversify';
-import { isRemoteMCPServerDescription, MCPServerDescription, MCPServerManager, MCPFrontendNotificationService, RemoteMCPServerDescription } from '../common/mcp-server-manager.js';
+import {
+    isLocalMCPServerDescription, isRemoteMCPServerDescription, MCPServerDescription, MCPServerManager, MCPFrontendNotificationService, RemoteMCPServerDescription
+} from '../common/mcp-server-manager.js';
 import { MCPServer } from './mcp-server.js';
 import { Disposable } from '@theia/core/lib/common/disposable';
 import { CallToolResult, ListResourcesResult, ReadResourceResult } from '@modelcontextprotocol/sdk/types.js';
@@ -125,9 +127,11 @@ export class MCPServerManagerImpl implements MCPServerManager {
                 server.update(resolved);
             }
         }
-        // A local server is a command that inherits the environment of the backend, which may still be waiting
-        // for the PATH of the user's login shell, e.g. when the server starts automatically at start-up.
-        await this.processEnvironment.ready;
+        if (isLocalMCPServerDescription(await server.getDescription())) {
+            // A local server is a command that inherits the environment of the backend, which may still be waiting
+            // for the PATH of the user's login shell, e.g. when the server starts automatically at start-up.
+            await this.processEnvironment.ready;
+        }
         await server.start({ interactive: !!options.interactive });
         this.notifyClients();
     }

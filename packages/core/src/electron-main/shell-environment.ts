@@ -30,23 +30,6 @@ const ANSI_ESCAPE = new RegExp([
 ].join('|'), 'g');
 
 /**
- * Extracts the `PATH` from the output of the login shell command of {@link ShellEnvironmentImpl}, or `undefined`
- * if the output does not define one.
- */
-export function parseShellPath(output: string): string | undefined {
-    const env = output.split(ENV_DELIMITER)[1];
-    if (env === undefined) {
-        return undefined;
-    }
-    for (const line of env.replace(ANSI_ESCAPE, '').split('\n')) {
-        if (line.startsWith('PATH=')) {
-            return line.substring('PATH='.length);
-        }
-    }
-    return undefined;
-}
-
-/**
  * Resolves the `PATH` of the user's login shell and applies it to the environment of the Electron main process.
  *
  * GUI applications on macOS and Linux do not inherit the `PATH` defined in the user's dotfiles
@@ -74,7 +57,7 @@ export class ShellEnvironmentImpl implements ShellEnvironment {
     protected readonly stopwatch: Stopwatch;
 
     /** How long to wait for the login shell, in milliseconds, before giving up. */
-    protected readonly timeoutMs = 10_000;
+    protected readonly timeoutMs: number = 10_000;
 
     protected applied: Promise<void> | undefined;
 
@@ -90,26 +73,29 @@ export class ShellEnvironmentImpl implements ShellEnvironment {
         if (process.platform === 'win32') {
             return;
         }
-        const resolved = await this.withTimeout(this.resolveShellPath());
+        const resolved = await this.withTimeout(signal => this.resolveShellPath(signal));
         process.env.PATH = resolved || this.getFallbackPath();
     }
 
     /**
      * Runs the user's login shell, falling back to other POSIX shells if it fails, and returns the `PATH` that
-     * its environment defines.
+     * its environment defines. The `signal` aborts the shell that is running and the fallback to other shells.
      *
      * This does what the `shell-path` package does, without its dependency on `execa`: `execa` installs
      * `signal-exit` listeners while the shell runs, and when it removes them, Node resets SIGINT, SIGTERM and
      * the other signals to their default action, which discards the handlers that Chromium installed to shut the
      * application down gracefully and to report crashes.
      */
-    protected async resolveShellPath(): Promise<string | undefined> {
+    protected async resolveShellPath(signal: AbortSignal): Promise<string | undefined> {
         const defaultShell = this.getDefaultShell();
         const shells = [defaultShell, ...['/bin/zsh', '/bin/bash'].filter(shell => shell !== defaultShell)];
         let lastError: unknown;
         for (const shell of shells) {
+            if (signal.aborted) {
+                throw signal.reason;
+            }
             try {
-                return parseShellPath(await this.runLoginShell(shell));
+                return this.parseShellPath(await this.runLoginShell(shell, signal));
             } catch (error) {
                 lastError = error;
             }
@@ -129,7 +115,7 @@ export class ShellEnvironmentImpl implements ShellEnvironment {
         return process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh');
     }
 
-    protected runLoginShell(shell: string): Promise<string> {
+    protected runLoginShell(shell: string, signal: AbortSignal): Promise<string> {
         // The `command` builtin avoids aliases and functions named `env`.
         const script = `echo -n "${ENV_DELIMITER}"; command env; echo -n "${ENV_DELIMITER}"; exit`;
         const env = {
@@ -140,7 +126,8 @@ export class ShellEnvironmentImpl implements ShellEnvironment {
             ZSH_TMUX_AUTOSTART: 'false'
         };
         return new Promise((resolve, reject) => {
-            execFile(shell, ['-ilc', script], { env, timeout: this.timeoutMs, encoding: 'utf8' }, (error, stdout) => {
+            // An interactive shell ignores SIGTERM, so a shell that hangs is killed with SIGKILL when the signal aborts.
+            execFile(shell, ['-ilc', script], { env, signal, killSignal: 'SIGKILL', encoding: 'utf8' }, (error, stdout) => {
                 if (error) {
                     reject(error);
                 } else {
@@ -150,11 +137,34 @@ export class ShellEnvironmentImpl implements ShellEnvironment {
         });
     }
 
-    protected withTimeout<T>(promise: Promise<T>): Promise<T> {
-        return new Promise<T>((resolve, reject) => {
-            const timer = setTimeout(() => reject(new Error(`The login shell did not respond within ${this.timeoutMs} ms`)), this.timeoutMs);
-            promise.then(resolve, reject).finally(() => clearTimeout(timer));
-        });
+    /**
+     * Extracts the `PATH` from the output of the login shell command of {@link runLoginShell}, or `undefined`
+     * if the output does not define one.
+     */
+    protected parseShellPath(output: string): string | undefined {
+        const env = output.split(ENV_DELIMITER)[1];
+        if (env === undefined) {
+            return undefined;
+        }
+        for (const line of env.replace(ANSI_ESCAPE, '').split('\n')) {
+            if (line.startsWith('PATH=')) {
+                return line.substring('PATH='.length);
+            }
+        }
+        return undefined;
+    }
+
+    /**
+     * Runs the `task` with a signal that aborts after {@link timeoutMs}, after which the result is an error.
+     */
+    protected async withTimeout<T>(task: (signal: AbortSignal) => Promise<T>): Promise<T> {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(new Error(`The login shell did not respond within ${this.timeoutMs} ms`)), this.timeoutMs);
+        try {
+            return await task(controller.signal);
+        } finally {
+            clearTimeout(timer);
+        }
     }
 
     /**

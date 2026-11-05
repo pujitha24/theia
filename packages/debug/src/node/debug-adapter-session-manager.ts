@@ -17,6 +17,7 @@
 import { UUID } from '@theia/core/shared/@lumino/coreutils';
 import { injectable, inject } from '@theia/core/shared/inversify';
 import { MessagingService } from '@theia/core/lib/node/messaging/messaging-service';
+import { ProcessEnvironment } from '@theia/core/lib/node/process-environment';
 
 import { DebugAdapterPath, ForwardingDebugChannel } from '../common/debug-service.js';
 import { DebugConfiguration } from '../common/debug-configuration.js';
@@ -35,6 +36,9 @@ export class DebugAdapterSessionManager implements MessagingService.Contribution
 
     @inject(DebugAdapterFactory)
     protected readonly debugAdapterFactory: DebugAdapterFactory;
+
+    @inject(ProcessEnvironment)
+    protected readonly processEnvironment: ProcessEnvironment;
 
     configure(service: MessagingService): void {
         service.registerChannelHandler(`${DebugAdapterPath}/:id`, ({ id }: { id: string }, wsChannel) => {
@@ -60,6 +64,8 @@ export class DebugAdapterSessionManager implements MessagingService.Contribution
             communicationProvider = this.debugAdapterFactory.connect(config.debugServer);
         } else {
             const executable = await registry.provideDebugAdapterExecutable(config);
+            // The debug adapter inherits the environment of the backend, which may still be waiting for the PATH of the user's login shell.
+            await this.processEnvironment.ready;
             communicationProvider = this.debugAdapterFactory.start(executable);
         }
 

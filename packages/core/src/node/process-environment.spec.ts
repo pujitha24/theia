@@ -21,8 +21,8 @@ import { PROCESS_ENVIRONMENT_PENDING_VARIABLE, ProcessEnvironmentImpl, ProcessEn
 const expect = chai.expect;
 
 /**
- * The service with the request made explicitly, a short timeout and the logger replaced, in a process that
- * pretends to have an IPC channel to its parent.
+ * The service waiting for the environment explicitly, with a short timeout and the logger replaced, in a process
+ * that pretends to have an IPC channel to its parent.
  */
 class TestProcessEnvironment extends ProcessEnvironmentImpl {
     readonly warnings: string[] = [];
@@ -33,23 +33,19 @@ class TestProcessEnvironment extends ProcessEnvironmentImpl {
 
     constructor() {
         super();
-        this.request();
+        this.awaitEnvironment();
     }
 }
 
 describe('ProcessEnvironmentImpl', () => {
 
     const variable = 'THEIA_PROCESS_ENVIRONMENT_SPEC_PATH';
-    const sent: unknown[] = [];
     let originalSend: typeof process.send;
 
     beforeEach(() => {
-        sent.length = 0;
         originalSend = process.send;
-        process.send = (message: unknown) => {
-            sent.push(message);
-            return true;
-        };
+        // the IPC channel to the parent process
+        process.send = () => true;
         delete process.env[PROCESS_ENVIRONMENT_PENDING_VARIABLE];
         delete process.env[variable];
     });
@@ -60,15 +56,14 @@ describe('ProcessEnvironmentImpl', () => {
         delete process.env[variable];
     });
 
-    function answer(env: NodeJS.ProcessEnv): void {
-        const response: ProcessEnvironmentMessage.Response = { type: ProcessEnvironmentMessage.Response.TYPE, env };
-        process.emit('message', response, undefined);
+    function send(env: NodeJS.ProcessEnv): void {
+        const message: ProcessEnvironmentMessage = { type: ProcessEnvironmentMessage.TYPE, env };
+        process.emit('message', message, undefined);
     }
 
     it('is ready at once when the parent announced nothing', async () => {
         const environment = new TestProcessEnvironment();
         await environment.ready;
-        expect(sent).to.deep.equal([]);
         expect(environment.warnings).to.deep.equal([]);
     });
 
@@ -80,10 +75,9 @@ describe('ProcessEnvironmentImpl', () => {
         expect(process.env[PROCESS_ENVIRONMENT_PENDING_VARIABLE]).to.equal(undefined);
     });
 
-    it('requests the environment, applies the answer and drops the announcement', async () => {
+    it('waits for the environment, applies it and drops the announcement', async () => {
         process.env[PROCESS_ENVIRONMENT_PENDING_VARIABLE] = 'pending';
         const environment = new TestProcessEnvironment();
-        expect(sent).to.deep.equal([{ type: ProcessEnvironmentMessage.Request.TYPE }]);
         // the announcement is dropped as soon as it has been read, so that child processes do not inherit it
         expect(process.env[PROCESS_ENVIRONMENT_PENDING_VARIABLE]).to.equal(undefined);
 
@@ -93,21 +87,21 @@ describe('ProcessEnvironmentImpl', () => {
         expect(ready).to.equal(false);
 
         process.emit('message', { type: 'something else' }, undefined);
-        answer({ [variable]: '/from/login/shell' });
+        send({ [variable]: '/from/login/shell' });
         await environment.ready;
         expect(process.env[variable]).to.equal('/from/login/shell');
         expect(environment.warnings).to.deep.equal([]);
     });
 
-    it('gives up with a warning when the parent does not answer in time', async () => {
+    it('gives up with a warning when the parent does not send the environment in time', async () => {
         process.env[PROCESS_ENVIRONMENT_PENDING_VARIABLE] = 'pending';
         const environment = new TestProcessEnvironment();
         await environment.ready;
         expect(environment.warnings).to.have.length(1);
         expect(process.env[PROCESS_ENVIRONMENT_PENDING_VARIABLE]).to.equal(undefined);
 
-        // a late answer is ignored
-        answer({ [variable]: '/too/late' });
+        // a late message is ignored
+        send({ [variable]: '/too/late' });
         expect(process.env[variable]).to.equal(undefined);
     });
 });

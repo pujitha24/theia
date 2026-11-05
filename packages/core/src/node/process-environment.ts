@@ -26,29 +26,17 @@ import { isObject } from '../common/types.js';
 export const PROCESS_ENVIRONMENT_PENDING_VARIABLE = 'THEIA_PROCESS_ENVIRONMENT';
 
 /**
- * The IPC messages exchanged between the backend and its parent process to complete the environment.
+ * The IPC message with which the parent process completes the environment of the backend, see {@link ProcessEnvironment}.
  */
+export interface ProcessEnvironmentMessage {
+    readonly type: typeof ProcessEnvironmentMessage.TYPE;
+    /** The variables to apply to the environment of the backend. */
+    readonly env: NodeJS.ProcessEnv;
+}
 export namespace ProcessEnvironmentMessage {
-    /** Sent by the backend to request the environment from its parent process. */
-    export interface Request {
-        readonly type: typeof Request.TYPE;
-    }
-    export namespace Request {
-        export const TYPE = 'theia-process-environment-request';
-        export function is(message: unknown): message is Request {
-            return isObject<Request>(message) && message.type === TYPE;
-        }
-    }
-    /** Sent by the parent process with the variables to apply to the environment of the backend. */
-    export interface Response {
-        readonly type: typeof Response.TYPE;
-        readonly env: NodeJS.ProcessEnv;
-    }
-    export namespace Response {
-        export const TYPE = 'theia-process-environment';
-        export function is(message: unknown): message is Response {
-            return isObject<Response>(message) && message.type === TYPE && isObject(message.env);
-        }
+    export const TYPE = 'theia-process-environment';
+    export function is(message: unknown): message is ProcessEnvironmentMessage {
+        return isObject<ProcessEnvironmentMessage>(message) && message.type === TYPE && isObject(message.env);
     }
 }
 
@@ -59,15 +47,16 @@ export const ProcessEnvironment = Symbol('ProcessEnvironment');
  *
  * An Electron application resolves the `PATH` of the user's login shell, which GUI applications on macOS and
  * Linux do not inherit, in its main process. Running the login shell can take seconds, so the backend is forked
- * before the `PATH` is known and receives it over IPC once it is. Until then `process.env` is the environment of
- * the GUI application, in which the user's tools may be missing. Code that spawns child processes which should
- * find the user's tools, such as terminals, tasks and the plugin host, awaits {@link ready} before spawning.
+ * before the `PATH` is known, with {@link PROCESS_ENVIRONMENT_PENDING_VARIABLE} set, and the main process sends
+ * it over IPC once it is. Until then `process.env` is the environment of the GUI application, in which the user's
+ * tools may be missing. Code that spawns child processes which should find the user's tools, such as terminals,
+ * tasks and the plugin host, awaits {@link ready} before spawning.
  */
 export interface ProcessEnvironment {
     /**
      * Resolves once `process.env` carries the environment of the user's login shell, or right away when nothing
      * is pending, for example in a browser deployment or on Windows. Never rejects: if the parent process does
-     * not answer in time, a warning is logged and the environment is left as it is.
+     * not send it in time, a warning is logged and the environment is left as it is.
      */
     readonly ready: Promise<void>;
 }
@@ -85,20 +74,20 @@ export class ProcessEnvironmentImpl implements ProcessEnvironment {
     readonly ready = this.readyDeferred.promise;
 
     /**
-     * The request is made as soon as the service exists. It is bound as a backend application contribution,
+     * The service waits for the environment as soon as it exists. It is bound as a backend application contribution,
      * without hooks, only so that it exists from the start of the backend rather than at the first injection.
      */
     @postConstruct()
     protected init(): void {
-        this.request();
+        this.awaitEnvironment();
     }
 
     /**
-     * Request the environment from the parent process, if it announced that the environment is pending.
+     * Wait for the environment from the parent process, if it announced that the environment is pending.
      */
-    protected request(): void {
+    protected awaitEnvironment(): void {
         const pending = process.env[PROCESS_ENVIRONMENT_PENDING_VARIABLE] === 'pending';
-        // The announcement is for this process only: child processes must not wait for an answer of their own.
+        // The announcement is for this process only: child processes must not wait for an environment of their own.
         delete process.env[PROCESS_ENVIRONMENT_PENDING_VARIABLE];
         if (!pending || typeof process.send !== 'function') {
             this.readyDeferred.resolve();
@@ -110,15 +99,16 @@ export class ProcessEnvironmentImpl implements ProcessEnvironment {
             this.readyDeferred.resolve();
         }, this.timeoutMs);
         const listener = (message: unknown) => {
-            if (ProcessEnvironmentMessage.Response.is(message)) {
+            if (ProcessEnvironmentMessage.is(message)) {
                 process.off('message', listener);
                 clearTimeout(timer);
                 this.apply(message.env);
                 this.readyDeferred.resolve();
             }
         };
+        // Node holds IPC messages that arrive before the first 'message' listener is attached, so the message of the
+        // parent is not lost while the backend starts up, as long as nothing else attaches a listener earlier.
         process.on('message', listener);
-        process.send({ type: ProcessEnvironmentMessage.Request.TYPE } satisfies ProcessEnvironmentMessage.Request);
     }
 
     protected apply(env: NodeJS.ProcessEnv): void {

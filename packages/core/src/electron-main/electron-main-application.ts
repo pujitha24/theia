@@ -859,14 +859,11 @@ export class ElectronMainApplication {
                 this.processArgv.getProcessArgvWithoutBin(),
                 await this.getForkOptions(),
             );
+            this.sendProcessEnvironment(backendProcess);
             return new Promise((resolve, reject) => {
-                backendProcess.on('message', (message: AddressInfo | ProcessEnvironmentMessage.Request) => {
-                    if (ProcessEnvironmentMessage.Request.is(message)) {
-                        this.sendProcessEnvironment(backendProcess);
-                    } else {
-                        // The backend server main file is also supposed to send the resolved http(s) server port via IPC.
-                        resolve(message.port);
-                    }
+                // The backend server main file is also supposed to send the resolved http(s) server port via IPC.
+                backendProcess.on('message', (address: AddressInfo) => {
+                    resolve(address.port);
                 });
                 backendProcess.on('error', error => {
                     reject(error);
@@ -906,20 +903,21 @@ export class ElectronMainApplication {
                 ...process.env,
                 [ElectronSecurityToken]: JSON.stringify(this.electronSecurityToken),
                 // The backend is forked before the PATH of the user's login shell is known, so that its start
-                // overlaps with the login shell. It requests the environment over IPC, see `sendProcessEnvironment`.
+                // overlaps with the login shell. It receives the environment over IPC, see `sendProcessEnvironment`.
                 [PROCESS_ENVIRONMENT_PENDING_VARIABLE]: 'pending'
             },
         };
     }
 
     /**
-     * Answer the backend's request for its environment once the PATH of the user's login shell is known.
+     * Send the backend its environment once the PATH of the user's login shell is known. The backend waits for
+     * this message as long as `getForkOptions` announces it, see `ProcessEnvironment`.
      */
     protected async sendProcessEnvironment(backendProcess: ChildProcess): Promise<void> {
         await this.shellEnvironment.apply();
         if (backendProcess.connected) {
-            const response: ProcessEnvironmentMessage.Response = { type: ProcessEnvironmentMessage.Response.TYPE, env: { PATH: process.env.PATH } };
-            backendProcess.send(response);
+            const message: ProcessEnvironmentMessage = { type: ProcessEnvironmentMessage.TYPE, env: { PATH: process.env.PATH } };
+            backendProcess.send(message);
         }
     }
 

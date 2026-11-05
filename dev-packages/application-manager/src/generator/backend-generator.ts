@@ -53,7 +53,8 @@ process.env.LC_NUMERIC = 'C';
 (async () => {
     // Note that GUI apps on macOS do not inherit the \`$PATH\` defined in the user's dotfiles
     // (.bashrc/.bash_profile/.zshrc/etc.). The ShellEnvironment service of the ElectronMainApplication
-    // resolves it in the background, without delaying the start-up, before the backend is forked.
+    // resolves it in the background, without delaying the start-up: the backend is forked right away
+    // and receives the PATH over IPC once it is known.
     const theiaAppProjectPath = resolve(import.meta.dirname, '..', '..');
     process.env.THEIA_APP_PROJECT_PATH = theiaAppProjectPath;
     const { default: electronMainApplicationModule } = await import('@theia/core/lib/electron-main/electron-main-application-module');

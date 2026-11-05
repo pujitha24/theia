@@ -26,6 +26,7 @@ import { RemoteProxyServerProvider } from '@theia/remote/lib/electron-node/remot
 import { RemoteStatusReport } from '@theia/remote/lib/electron-node/remote-types';
 import { RpcServer, ILogger, MessageService, generateUuid, URI } from '@theia/core';
 import { inject, injectable, named } from '@theia/core/shared/inversify';
+import { ProcessEnvironment } from '@theia/core/lib/node/process-environment';
 import Docker from 'dockerode';
 import { DevContainerFileService } from './dev-container-file-service.js';
 import { DockerContainerService } from './docker-container-service.js';
@@ -64,6 +65,9 @@ export class DevContainerConnectionProvider implements RemoteContainerConnection
 
     @inject(MessageService)
     protected readonly messageService: MessageService;
+
+    @inject(ProcessEnvironment)
+    protected readonly processEnvironment: ProcessEnvironment;
 
     protected outputProvider: ContainerOutputProvider | undefined;
 
@@ -244,6 +248,9 @@ export class DevContainerConnectionProvider implements RemoteContainerConnection
     async connectToContainer(options: ContainerConnectionOptions): Promise<ContainerConnectionResult> {
         const progress = await this.messageService.showProgress({ text: 'Creating container' });
         try {
+            // The docker CLI and the other tools run on the host must be found on the PATH of the user's login
+            // shell, which the backend may still be waiting for when a container window is restored at start-up.
+            await this.processEnvironment.ready;
             const report: RemoteStatusReport = message => progress.report({ message });
             const docker = await this.createDockerConnection();
 
@@ -296,6 +303,7 @@ export class DevContainerConnectionProvider implements RemoteContainerConnection
     async attachToContainer(options: AttachContainerOptions): Promise<ContainerConnectionResult> {
         const progress = await this.messageService.showProgress({ text: 'Attaching to container' });
         try {
+            await this.processEnvironment.ready;
             const report: RemoteStatusReport = message => {
                 progress.report({ message });
                 // Mirror the status to the frontend so the CLI "attaching" screen can show live progress.

@@ -31,11 +31,11 @@ export class ShellExecutionServerImpl implements ShellExecutionServer {
     protected readonly processEnvironment: ProcessEnvironment;
 
     protected readonly runningProcesses = new Map<string, ChildProcess>();
+    /** The executions that wait for the environment of the backend before they start. */
+    protected readonly pendingExecutions = new Set<string>();
     protected readonly canceledExecutions = new Set<string>();
 
     async execute(request: ShellExecutionRequest): Promise<ShellExecutionResult> {
-        // The command inherits the environment of the backend, which may still be waiting for the PATH of the user's login shell.
-        await this.processEnvironment.ready;
         const { command, cwd, timeout, executionId } = request;
         if (cwd && !path.isAbsolute(cwd)) {
             throw new Error(
@@ -45,6 +45,30 @@ export class ShellExecutionServerImpl implements ShellExecutionServer {
         }
         const effectiveTimeout = Math.min(timeout ?? DEFAULT_TIMEOUT, MAX_TIMEOUT);
         const startTime = Date.now();
+
+        // The command inherits the environment of the backend, which may still be waiting for the PATH of the user's login shell.
+        if (executionId) {
+            this.pendingExecutions.add(executionId);
+        }
+        try {
+            await this.processEnvironment.ready;
+        } finally {
+            if (executionId) {
+                this.pendingExecutions.delete(executionId);
+            }
+        }
+        if (executionId && this.canceledExecutions.delete(executionId)) {
+            return {
+                success: false,
+                exitCode: undefined,
+                stdout: '',
+                stderr: '',
+                error: 'Command canceled by user',
+                duration: Date.now() - startTime,
+                canceled: true,
+                resolvedCwd: cwd,
+            };
+        }
 
         return new Promise<ShellExecutionResult>(resolve => {
             let stdout = '';
@@ -164,6 +188,11 @@ export class ShellExecutionServerImpl implements ShellExecutionServer {
             this.canceledExecutions.add(executionId);
             this.killProcessTree(childProcess);
             this.runningProcesses.delete(executionId);
+            return true;
+        }
+        if (this.pendingExecutions.has(executionId)) {
+            // The execution has not started yet, see `execute`
+            this.canceledExecutions.add(executionId);
             return true;
         }
         return false;

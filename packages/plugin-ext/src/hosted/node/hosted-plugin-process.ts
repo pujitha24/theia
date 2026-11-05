@@ -22,6 +22,7 @@ import { inject, injectable, named } from '@theia/core/shared/inversify';
 import * as cp from 'child_process';
 import { Duplex } from 'stream';
 import { HostedPluginClient, PLUGIN_HOST_BACKEND, PluginHostEnvironmentVariable, ServerPluginRunner } from '../../common/plugin-protocol.js';
+import { LogType } from '../../common/types.js';
 import { PluginHostNavigatorState } from '../../main/common/plugin-host-environment-preferences.js';
 import { HostedPluginCliContribution } from './hosted-plugin-cli-contribution.js';
 import { HostedPluginLocalizationService } from './hosted-plugin-localization-service.js';
@@ -87,7 +88,8 @@ export class HostedPluginProcess implements ServerPluginRunner {
     public setClient(client: HostedPluginClient): void {
         if (this.client) {
             if (this.childProcess) {
-                this.runPluginServer();
+                // A failure is reported by `runPluginServer`
+                this.runPluginServer().catch(() => undefined);
             }
         }
         this.client = client;
@@ -156,7 +158,14 @@ export class HostedPluginProcess implements ServerPluginRunner {
         this.processUtils.terminateProcessTree(parentPid);
     }
 
-    public runPluginServer(serverName?: string): void {
+    /**
+     * Starts the plugin host once the environment of the backend is complete.
+     *
+     * @returns a promise that settles when the plugin host has been forked, or when the fork was cancelled by a
+     * termination in the meantime; it rejects if the plugin host could not be forked. The failure is logged and
+     * reported to the client before the promise rejects, see {@link reportStartFailure}.
+     */
+    public async runPluginServer(serverName?: string): Promise<void> {
         if (this.childProcess) {
             this.terminatePluginServer();
         }
@@ -167,33 +176,47 @@ export class HostedPluginProcess implements ServerPluginRunner {
         // The plugin host and the processes that plugins spawn (language servers, debug adapters) inherit the
         // environment of the backend, which may still be waiting for the PATH of the user's login shell.
         // Messages for the plugin host that arrive in the meantime are kept and delivered once it runs.
-        this.processEnvironment.ready.then(() => {
-            if (request !== this.runRequest || this.terminatingPluginServer) {
-                return;
-            }
-            this.forkPending = false;
+        await this.processEnvironment.ready;
+        if (request !== this.runRequest || this.terminatingPluginServer) {
+            return;
+        }
+        this.forkPending = false;
+        try {
             this.childProcess = this.fork({
                 serverName: serverName ?? 'hosted-plugin',
                 logger: this.logger,
                 args: []
             });
-
-            this.messagePipe = new BinaryMessagePipe(this.childProcess.stdio[4] as Duplex);
-            this.messagePipe.onMessage(buffer => {
-                if (this.client) {
-                    this.client.postMessage(PLUGIN_HOST_BACKEND, buffer);
-                }
-            });
-            const pending = this.pendingMessages;
+        } catch (error) {
             this.pendingMessages = [];
-            for (const message of pending) {
-                this.messagePipe.send(message);
+            this.reportStartFailure(error);
+            throw error;
+        }
+
+        this.messagePipe = new BinaryMessagePipe(this.childProcess.stdio[4] as Duplex);
+        this.messagePipe.onMessage(buffer => {
+            if (this.client) {
+                this.client.postMessage(PLUGIN_HOST_BACKEND, buffer);
             }
         });
+        const pending = this.pendingMessages;
+        this.pendingMessages = [];
+        for (const message of pending) {
+            this.messagePipe.send(message);
+        }
+    }
+
+    /**
+     * Reports that the plugin host could not be forked to the log of the backend and, as the client otherwise
+     * waits for a plugin host that never started, to the client.
+     */
+    protected reportStartFailure(error: unknown): void {
+        this.logger.error('Failed to start the plugin host:', error);
+        this.client?.log({ type: LogType.Error, data: `Failed to start the plugin host: ${error}` });
     }
 
     readonly HOSTED_PLUGIN_ENV_REGEXP_EXCLUSION = new RegExp('HOSTED_PLUGIN*');
-    private fork(options: IPCConnectionOptions): cp.ChildProcess {
+    protected fork(options: IPCConnectionOptions): cp.ChildProcess {
 
         // create env and add PATH to it so any executable from root process is available
         const env = createIpcEnv({ env: process.env });

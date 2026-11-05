@@ -87,8 +87,11 @@ export class HostedPluginSupport {
 
     runPluginServer(serverName?: string): void {
         if (!this.isPluginProcessRunning) {
-            this.hostedPluginProcess.runPluginServer(serverName);
             this.isPluginProcessRunning = true;
+            // The failure is reported by the process; the host may be started again
+            this.hostedPluginProcess.runPluginServer(serverName).catch(() => {
+                this.isPluginProcessRunning = false;
+            });
         }
     }
 
